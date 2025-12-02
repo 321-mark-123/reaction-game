@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Reaction Timer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0F172A;
+            --surface-color: #1E293B;
+            --primary-text: #F1F5F9;
+            --secondary-text: #94A3B8;
+            --accent-ready: #10B981;
+            --accent-waiting: #F59E0B;
+            --accent-result: #3B82F6;
+            --accent-error: #EF4444;
+            --font-heading: 'Poppins', sans-serif;
+            --font-body: 'Inter', sans-serif;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--primary-text);
+            font-family: var(--font-body);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none; /* Let clicks pass through to canvas handler */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 2rem;
+        }
+
+        /* Header */
+        header {
+            text-align: center;
+            pointer-events: auto;
+        }
+
+        h1 {
+            font-family: var(--font-heading);
+            font-size: 2rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            text-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .subtitle {
+            color: var(--secondary-text);
+            font-size: 1rem;
+        }
+
+        /* Main Status Display */
+        #status-display {
+            text-align: center;
+            pointer-events: none;
+            transition: transform 0.3s ease;
+        }
+
+        #status-icon {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        #status-text {
+            font-family: var(--font-heading);
+            font-size: 3rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            text-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+
+        #instruction-text {
+            margin-top: 1rem;
+            font-size: 1.25rem;
+            color: var(--secondary-text);
+            background: rgba(15, 23, 42, 0.6);
+            padding: 0.5rem 1rem;
+            border-radius: 2rem;
+            display: inline-block;
+            backdrop-filter: blur(4px);
+        }
+
+        /* Stats Panel */
+        #stats-panel {
+            display: flex;
+            justify-content: center;
+            gap: 2rem;
+            pointer-events: auto;
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(10px);
+            padding: 1.5rem;
+            border-radius: 1rem;
+            border: 1px solid rgba(255,255,255,0.1);
+            max-width: 800px;
+            margin: 0 auto;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+        }
+
+        .stat-item {
+            text-align: center;
+            min-width: 120px;
+        }
+
+        .stat-label {
+            display: block;
+            color: var(--secondary-text);
+            font-size: 0.875rem;
+            margin-bottom: 0.25rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .stat-value {
+            font-family: var(--font-heading);
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--primary-text);
+        }
+
+        .stat-value.highlight {
+            color: var(--accent-result);
+        }
+
+        /* Click overlay for interaction */
+        #click-zone {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1; /* Above canvas, below UI elements that need interaction */
+            cursor: pointer;
+        }
+
+        /* Mobile Adjustments */
+        @media (max-width: 768px) {
+            #status-text { font-size: 2rem; }
+            #stats-panel { 
+                flex-wrap: wrap; 
+                gap: 1rem;
+                padding: 1rem;
+            }
+            .stat-item { min-width: 45%; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <div id="click-zone"></div>
+
+    <div id="ui-layer">
+        <header>
+            <h1>Reaction Timer</h1>
+            <p class="subtitle">Test your reflexes in 3D</p>
+        </header>
+
+        <div id="status-display">
+            <span id="status-icon">🎮</span>
+            <div id="status-text">Click to Start</div>
+            <div id="instruction-text">Tap anywhere to begin</div>
+        </div>
+
+        <div id="stats-panel">
+            <div class="stat-item">
+                <span class="stat-label">Last Time</span>
+                <span id="stat-last" class="stat-value">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Best Time</span>
+                <span id="stat-best" class="stat-value highlight">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Average</span>
+                <span id="stat-avg" class="stat-value">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Attempts</span>
+                <span id="stat-count" class="stat-value">0</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Game State Management ---
+        const GameState = {
+            IDLE: 'IDLE',
+            WAITING: 'WAITING',
+            READY: 'READY',
+            RESULT: 'RESULT',
+            FALSE_START: 'FALSE_START'
+        };
+
+        let currentState = GameState.IDLE;
+        let startTime = 0;
+        let timerTimeout = null;
+        
+        // Stats
+        let attempts = 0;
+        let bestTime = Infinity;
+        let totalTime = 0;
+        let history = [];
+
+        // DOM Elements
+        const statusText = document.getElementById('status-text');
+        const statusIcon = document.getElementById('status-icon');
+        const instructionText = document.getElementById('instruction-text');
+        const statLast = document.getElementById('stat-last');
+        const statBest = document.getElementById('stat-best');
+        const statAvg = document.getElementById('stat-avg');
+        const statCount = document.getElementById('stat-count');
+        const clickZone = document.getElementById('click-zone');
+
+        // --- Three.js Setup ---
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        // Fog to blend floor into background
+        scene.fog = new THREE.Fog(0x0F172A, 10, 50);
+        
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 5, 10);
+        camera.lookAt(0, 0, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        container.appendChild(renderer.domElement);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(5, 10, 7);
+        scene.add(dirLight);
+
+        const pointLight = new THREE.PointLight(0x3B82F6, 1, 20); // Dynamic light
+        pointLight.position.set(0, 2, 0);
+        scene.add(pointLight);
+
+        // Objects
+        // 1. Main Interactive Object (The "Button")
+        const geometry = new THREE.IcosahedronGeometry(1.5, 0);
+        const material = new THREE.MeshStandardMaterial({ 
+            color: 0x3B82F6, 
+            roughness: 0.2, 
+            metalness: 0.5,
+            flatShading: true
+        });
+        const mainObject = new THREE.Mesh(geometry, material);
+        scene.add(mainObject);
+
+        // 2. Orbiting Rings (Visual Flair)
+        const ringGeo = new THREE.TorusGeometry(2.5, 0.05, 16, 100);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 });
+        const ring1 = new THREE.Mesh(ringGeo, ringMat);
+        const ring2 = new THREE.Mesh(ringGeo, ringMat);
+        ring1.rotation.x = Math.PI / 2;
+        ring2.rotation.x = Math.PI / 2;
+        ring2.rotation.y = Math.PI / 4;
+        scene.add(ring1);
+        scene.add(ring2);
+
+        // 3. Floor Grid
+        const gridHelper = new THREE.GridHelper(50, 50, 0x1E293B, 0x1E293B);
+        scene.add(gridHelper);
+
+        // --- Animation Loop ---
+        let frameId;
+        const clock = new THREE.Clock();
+
+        function animate() {
+            frameId = requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+            const delta = clock.getDelta();
+
+            // Idle/Waiting Animation
+            if (currentState === GameState.IDLE || currentState === GameState.RESULT) {
+                mainObject.rotation.y += 0.01;
+                mainObject.rotation.z += 0.005;
+                mainObject.position.y = Math.sin(time) * 0.2;
+                
+                ring1.rotation.x = Math.PI / 2 + Math.sin(time * 0.5) * 0.2;
+                ring1.rotation.y += 0.002;
+                ring2.rotation.x = Math.PI / 2 + Math.cos(time * 0.5) * 0.2;
+                ring2.rotation.y -= 0.002;
+            } 
+            else if (currentState === GameState.WAITING) {
+                // Pulse faster
+                mainObject.rotation.y += 0.05;
+                mainObject.rotation.z += 0.02;
+                const scale = 1 + Math.sin(time * 10) * 0.05;
+                mainObject.scale.set(scale, scale, scale);
+                mainObject.position.y = 0;
+            }
+            else if (currentState === GameState.READY) {
+                // Rapid spin
+                mainObject.rotation.x += 0.2;
+                mainObject.rotation.y += 0.2;
+                mainObject.scale.set(1.2, 1.2, 1.2);
+            }
+            else if (currentState === GameState.FALSE_START) {
+                // Shake
+                mainObject.position.x = Math.sin(time * 50) * 0.2;
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- Game Logic ---
+
+        function setVisualState(state) {
+            switch(state) {
+                case GameState.IDLE:
+                    material.color.setHex(0x3B82F6); // Blue
+                    material.emissive.setHex(0x000000);
+                    pointLight.color.setHex(0x3B82F6);
+                    statusText.style.color = 'var(--primary-text)';
+                    statusIcon.textContent = '🎮';
+                    statusText.textContent = 'Click to Start';
+                    instructionText.textContent = 'Tap anywhere to begin';
+                    break;
+                case GameState.WAITING:
+                    material.color.setHex(0xF59E0B); // Amber
+                    material.emissive.setHex(0x553300);
+                    pointLight.color.setHex(0xF59E0B);
+                    statusText.style.color = 'var(--accent-waiting)';
+                    statusIcon.textContent = '✋';
+                    statusText.textContent = 'Wait for Green...';
+                    instructionText.textContent = 'Don\'t click yet!';
+                    break;
+                case GameState.READY:
+                    material.color.setHex(0x10B981); // Emerald
+                    material.emissive.setHex(0x004422);
+                    pointLight.color.setHex(0x10B981);
+                    statusText.style.color = 'var(--accent-ready)';
+                    statusIcon.textContent = '⚡';
+                    statusText.textContent = 'CLICK NOW!';
+                    instructionText.textContent = 'Go! Go! Go!';
+                    break;
+                case GameState.RESULT:
+                    material.color.setHex(0x3B82F6); // Blue
+                    material.emissive.setHex(0x000000);
+                    pointLight.color.setHex(0x3B82F6);
+                    statusText.style.color = 'var(--accent-result)';
+                    statusIcon.textContent = '⏱️';
+                    // Text set by result handler
+                    instructionText.textContent = 'Click to try again';
+                    break;
+                case GameState.FALSE_START:
+                    material.color.setHex(0xEF4444); // Red
+                    material.emissive.setHex(0x550000);
+                    pointLight.color.setHex(0xEF4444);
+                    statusText.style.color = 'var(--accent-error)';
+                    statusIcon.textContent = '⚠️';
+                    statusText.textContent = 'Too Early!';
+                    instructionText.textContent = 'Click to reset';
+                    break;
+            }
+        }
+
+        function startGame() {
+            currentState = GameState.WAITING;
+            setVisualState(GameState.WAITING);
+            
+            // Random delay between 1000ms and 5000ms
+            const delay = Math.floor(Math.random() * 4000) + 1000;
+            
+            timerTimeout = setTimeout(() => {
+                if (currentState === GameState.WAITING) {
+                    triggerReady();
+                }
+            }, delay);
+        }
+
+        function triggerReady() {
+            currentState = GameState.READY;
+            setVisualState(GameState.READY);
+            startTime = performance.now();
+        }
+
+        function handleInteraction() {
+            switch(currentState) {
+                case GameState.IDLE:
+                    startGame();
+                    break;
+                
+                case GameState.WAITING:
+                    // False Start
+                    clearTimeout(timerTimeout);
+                    currentState = GameState.FALSE_START;
+                    setVisualState(GameState.FALSE_START);
+                    break;
+                
+                case GameState.READY:
+                    // Success
+                    const endTime = performance.now();
+                    const reactionTime = Math.round(endTime - startTime);
+                    processResult(reactionTime);
+                    break;
+                
+                case GameState.RESULT:
+                case GameState.FALSE_START:
+                    // Reset
+                    currentState = GameState.IDLE;
+                    setVisualState(GameState.IDLE);
+                    mainObject.scale.set(1, 1, 1);
+                    mainObject.position.set(0, 0, 0);
+                    mainObject.rotation.set(0, 0, 0);
+                    startGame(); // Optional: Immediate restart or go to IDLE? Let's go to IDLE first or restart?
+                    // Design choice: Click on result usually starts next round immediately or goes to idle.
+                    // Let's go to waiting immediately for flow, or IDLE? 
+                    // Let's go to IDLE to let user breathe.
+                    // Actually, code above sets IDLE then calls startGame()... so it restarts immediately.
+                    // Let's change to just IDLE so they can see stats.
+                    // Wait, if I call startGame() it restarts. Let's just go to IDLE.
+                    // But if they clicked to "try again", they probably want to start.
+                    // Let's keep it as is: Click -> Restart.
+                    break;
+            }
+        }
+
+        function processResult(ms) {
+            currentState = GameState.RESULT;
+            setVisualState(GameState.RESULT);
+            statusText.textContent = `${ms} ms`;
+            
+            // Update Stats
+            attempts++;
+            history.push(ms);
+            totalTime += ms;
+            
+            if (ms < bestTime) bestTime = ms;
+            const avg = Math.round(totalTime / attempts);
+
+            statLast.textContent = `${ms} ms`;
+            statBest.textContent = `${bestTime} ms`;
+            statAvg.textContent = `${avg} ms`;
+            statCount.textContent = attempts;
+        }
+
+        // Event Listeners
+        clickZone.addEventListener('mousedown', (e) => {
+            e.preventDefault(); // Prevent text selection
+            handleInteraction();
+        });
+        
+        // Touch support
+        clickZone.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            handleInteraction();
+        }, { passive: false });
+
+        // Keyboard support (Spacebar)
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                handleInteraction();
+            }
+        });
+
+        // Resize Handler
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Initial State
+        setVisualState(GameState.IDLE);
+
+    </script>
+</body>
+</html>
