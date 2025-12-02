@@ -1,0 +1,36 @@
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reaction Timer Game</title>
+  <!-- Google Fonts -->
+  https://fonts.googleapis.com/css2?family=Montserrat:wght@600&family=Roboto&display=swap
+  <!-- Styles -->
+  <link rel="stylesheet" href="style/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Reaction Timer</h1>
+    <p>Click when the shape turns green!</p>
+  </header>
+
+  <main>
+    <div id="game-container">
+      <canvas id="three-canvas"></canvas>
+      <div id="controls">
+        <button id="start-btn">Start</button>
+        <p id="status">Press Start to begin</p>
+        <p id="result">Reaction Time: -- ms</p>
+        <p id="stats">Best: -- ms | Avg: -- ms</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

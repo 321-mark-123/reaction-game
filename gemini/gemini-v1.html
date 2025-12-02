@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reaction Time Benchmark | 3D Visualization</title>
+    
+    <!-- Fonts: Inter (UI) and JetBrains Mono (Data) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS for UI Layout -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js for 3D Graphics -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <style>
+        :root {
+            --bg-primary: #0F172A;
+            --text-primary: #F8FAFC;
+            --color-wait: #EF4444;
+            --color-go: #10B981;
+            --color-idle: #3B82F6;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: 'Inter', sans-serif;
+            overflow: hidden; /* Prevent scrolling */
+            user-select: none; /* Prevent text selection during rapid clicks */
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* Utility to center the canvas behind UI */
+        #canvas-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* UI Overlay sits on top of canvas */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none; /* Let clicks pass through to the document listener */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 2rem;
+        }
+
+        /* Interactive elements need pointer-events back on */
+        .interactive {
+            pointer-events: auto;
+        }
+
+        .fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 3D Scene Container -->
+    <div id="canvas-container"></div>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer">
+        <!-- Header / Stats -->
+        <div class="flex justify-between items-start w-full max-w-4xl mx-auto">
+            <div>
+                <h1 class="text-sm uppercase tracking-widest text-slate-400 font-semibold">Reaction Benchmark</h1>
+                <div class="mt-1 flex items-baseline gap-2">
+                    <span class="text-xs text-slate-500">SESSION AVG</span>
+                    <span id="avg-display" class="mono text-xl text-white">--</span>
+                </div>
+            </div>
+            <div class="text-right">
+                <div class="text-xs text-slate-500 uppercase tracking-wide">Personal Best</div>
+                <div id="pb-display" class="mono text-xl text-emerald-400">--</div>
+            </div>
+        </div>
+
+        <!-- Main Center Instruction -->
+        <div class="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-center w-full">
+            <h2 id="main-status" class="text-4xl md:text-6xl font-bold tracking-tight drop-shadow-lg transition-all duration-200">
+                CLICK TO START
+            </h2>
+            <p id="sub-status" class="mt-4 text-slate-400 text-lg md:text-xl font-light fade-in">
+                Wait for the shape to turn green.
+            </p>
+            <div id="timer-result" class="hidden mt-6 mono text-5xl md:text-7xl font-bold text-white drop-shadow-2xl fade-in">
+                0 ms
+            </div>
+        </div>
+
+        <!-- Footer / Progress -->
+        <div class="w-full max-w-4xl mx-auto flex justify-center items-end h-16">
+            <div class="flex gap-2">
+                <!-- 5 dots for progress -->
+                <div class="progress-dot w-3 h-3 rounded-full bg-slate-700 transition-colors duration-300"></div>
+                <div class="progress-dot w-3 h-3 rounded-full bg-slate-700 transition-colors duration-300"></div>
+                <div class="progress-dot w-3 h-3 rounded-full bg-slate-700 transition-colors duration-300"></div>
+                <div class="progress-dot w-3 h-3 rounded-full bg-slate-700 transition-colors duration-300"></div>
+                <div class="progress-dot w-3 h-3 rounded-full bg-slate-700 transition-colors duration-300"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * CONFIGURATION & CONSTANTS
+         */
+        const COLORS = {
+            bg: 0x0F172A,
+            idle: 0x3B82F6,   // Blue
+            wait: 0xEF4444,   // Red
+            go: 0x10B981,     // Green
+            white: 0xffffff
+        };
+
+        const STATES = {
+            IDLE: 'IDLE',         // Menu / Start screen
+            WAITING: 'WAITING',   // Red state, waiting for random timeout
+            READY: 'READY',       // Green state, timer running
+            RESULT: 'RESULT',     // Show time for specific round
+            EARLY: 'EARLY',       // Penalty state
+            SUMMARY: 'SUMMARY'    // End of 5 rounds
+        };
+
+        /**
+         * GAME STATE
+         */
+        let currentState = STATES.IDLE;
+        let timeoutId = null;
+        let startTime = 0;
+        let reactionTimes = [];
+        const MAX_ROUNDS = 5;
+        
+        // DOM Elements
+        const mainStatusEl = document.getElementById('main-status');
+        const subStatusEl = document.getElementById('sub-status');
+        const timerResultEl = document.getElementById('timer-result');
+        const progressDots = document.querySelectorAll('.progress-dot');
+        const avgDisplay = document.getElementById('avg-display');
+        const pbDisplay = document.getElementById('pb-display');
+
+        /**
+         * THREE.JS SETUP
+         */
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(COLORS.bg);
+        // Add some fog for depth
+        scene.fog = new THREE.FogExp2(COLORS.bg, 0.035);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 5;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Performance optimization
+        container.appendChild(renderer.domElement);
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+
+        const pointLight = new THREE.PointLight(0xffffff, 1);
+        pointLight.position.set(10, 10, 10);
+        scene.add(pointLight);
+
+        const backLight = new THREE.PointLight(COLORS.idle, 0.5);
+        backLight.position.set(-10, -10, -5);
+        scene.add(backLight);
+
+        // The Main Geometric Shape (Icosahedron)
+        const geometry = new THREE.IcosahedronGeometry(1.8, 0); // Low poly look
+        const material = new THREE.MeshStandardMaterial({ 
+            color: COLORS.idle,
+            roughness: 0.2,
+            metalness: 0.1,
+            flatShading: true 
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        scene.add(mesh);
+
+        // Particle System (Stars/Dust)
+        const particlesGeometry = new THREE.BufferGeometry();
+        const particlesCount = 700;
+        const posArray = new Float32Array(particlesCount * 3);
+        
+        for(let i = 0; i < particlesCount * 3; i++) {
+            posArray[i] = (Math.random() - 0.5) * 20; // Spread within 20 units
+        }
+        
+        particlesGeometry.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+        const particlesMaterial = new THREE.PointsMaterial({
+            size: 0.02,
+            color: COLORS.white,
+            transparent: true,
+            opacity: 0.4
+        });
+        const particlesMesh = new THREE.Points(particlesGeometry, particlesMaterial);
+        scene.add(particlesMesh);
+
+        /**
+         * ANIMATION LOOP
+         */
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Shape Rotation Logic based on State
+            if (currentState === STATES.IDLE || currentState === STATES.SUMMARY) {
+                mesh.rotation.x += 0.003;
+                mesh.rotation.y += 0.005;
+                // Gentle breathing
+                const scale = 1 + Math.sin(Date.now() * 0.001) * 0.05;
+                mesh.scale.set(scale, scale, scale);
+            } 
+            else if (currentState === STATES.WAITING) {
+                // Tense, fast rotation
+                mesh.rotation.x += 0.02;
+                mesh.rotation.y += 0.02;
+                // Nervous vibration
+                mesh.position.x = (Math.random() - 0.5) * 0.05;
+                mesh.position.y = (Math.random() - 0.5) * 0.05;
+            } 
+            else if (currentState === STATES.READY) {
+                // Stabilize
+                mesh.rotation.x += 0.01;
+                mesh.rotation.y += 0.01;
+                mesh.position.set(0,0,0);
+                mesh.scale.set(1.2, 1.2, 1.2); // Expand slightly
+            }
+            else if (currentState === STATES.EARLY) {
+                 // Reset position
+                 mesh.position.set(0,0,0);
+            }
+
+            // Slowly rotate particles
+            particlesMesh.rotation.y = Date.now() * 0.0001;
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        /**
+         * GAME LOGIC & STATE MANAGEMENT
+         */
+
+        // Initial Load
+        updateStatsDisplay();
+        
+        // Handle Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Input Handling (Mouse + Keyboard)
+        const handleInput = (e) => {
+            // Prevent Spacebar scrolling
+            if (e.type === 'keydown' && e.code === 'Space') e.preventDefault();
+            if (e.type === 'keydown' && e.code !== 'Space') return; // Only accept space
+
+            switch (currentState) {
+                case STATES.IDLE:
+                case STATES.SUMMARY:
+                    startRound();
+                    break;
+                case STATES.WAITING:
+                    triggerEarly();
+                    break;
+                case STATES.READY:
+                    triggerSuccess();
+                    break;
+                case STATES.EARLY:
+                case STATES.RESULT:
+                    // If round finished or failed, click to continue
+                    nextRound();
+                    break;
+            }
+        };
+
+        document.addEventListener('mousedown', handleInput);
+        document.addEventListener('touchstart', handleInput, {passive: false});
+        document.addEventListener('keydown', handleInput);
+
+        function setMaterialColor(hex) {
+            material.color.setHex(hex);
+            // Also update the backlight for immersion
+            backLight.color.setHex(hex);
+        }
+
+        function startRound() {
+            if (reactionTimes.length >= MAX_ROUNDS) {
+                // Reset if we are restarting a full session
+                reactionTimes = [];
+                updateProgressDots();
+            }
+
+            currentState = STATES.WAITING;
+            
+            // UI Updates
+            mainStatusEl.innerText = "WAIT...";
+            mainStatusEl.classList.add("text-red-500");
+            mainStatusEl.classList.remove("text-white", "text-emerald-400");
+            subStatusEl.innerText = "Click when the shape turns GREEN";
+            timerResultEl.classList.add("hidden");
+            
+            // 3D Updates
+            setMaterialColor(COLORS.wait);
+
+            // Random Delay: 2s to 5s
+            const delay = Math.floor(Math.random() * 3000) + 2000;
+
+            timeoutId = setTimeout(() => {
+                if (currentState === STATES.WAITING) {
+                    triggerGo();
+                }
+            }, delay);
+        }
+
+        function triggerGo() {
+            currentState = STATES.READY;
+            startTime = performance.now();
+            
+            // Visual Stimulus
+            setMaterialColor(COLORS.go);
+            mainStatusEl.innerText = "CLICK!";
+            mainStatusEl.classList.remove("text-red-500");
+            mainStatusEl.classList.add("text-emerald-400");
+        }
+
+        function triggerEarly() {
+            clearTimeout(timeoutId);
+            currentState = STATES.EARLY;
+            
+            setMaterialColor(COLORS.wait); // Keep it red
+            mainStatusEl.innerText = "TOO EARLY!";
+            subStatusEl.innerText = "Click to try again";
+            
+            // Shake effect in UI?
+            mainStatusEl.classList.add("animate-pulse");
+        }
+
+        function triggerSuccess() {
+            const endTime = performance.now();
+            const reactionTime = Math.round(endTime - startTime);
+            currentState = STATES.RESULT;
+
+            reactionTimes.push(reactionTime);
+            updateProgressDots();
+
+            // UI Feedback
+            setMaterialColor(COLORS.idle); // Back to blue
+            mainStatusEl.innerText = "NICE!";
+            mainStatusEl.classList.remove("text-emerald-400");
+            mainStatusEl.classList.add("text-white");
+            
+            subStatusEl.innerText = "Click to continue";
+            timerResultEl.innerText = `${reactionTime} ms`;
+            timerResultEl.classList.remove("hidden");
+        }
+
+        function nextRound() {
+            // Remove any leftover animation classes
+            mainStatusEl.classList.remove("animate-pulse");
+
+            if (currentState === STATES.EARLY) {
+                // Retry the round, don't advance count
+                startRound();
+                return;
+            }
+
+            if (reactionTimes.length >= MAX_ROUNDS) {
+                showSummary();
+            } else {
+                startRound();
+            }
+        }
+
+        function showSummary() {
+            currentState = STATES.SUMMARY;
+            
+            // Calculate Average
+            const sum = reactionTimes.reduce((a, b) => a + b, 0);
+            const avg = Math.round(sum / reactionTimes.length);
+
+            // Save Personal Best
+            const currentPb = localStorage.getItem('reaction_pb');
+            if (!currentPb || avg < parseInt(currentPb)) {
+                localStorage.setItem('reaction_pb', avg);
+                subStatusEl.innerText = "NEW PERSONAL BEST!";
+            } else {
+                subStatusEl.innerText = "Session Complete. Click to restart.";
+            }
+
+            // Update UI
+            mainStatusEl.innerText = "AVERAGE";
+            timerResultEl.innerText = `${avg} ms`;
+            timerResultEl.classList.remove("hidden");
+            
+            updateStatsDisplay();
+            setMaterialColor(COLORS.idle);
+        }
+
+        /**
+         * UTILS
+         */
+        function updateProgressDots() {
+            progressDots.forEach((dot, index) => {
+                if (index < reactionTimes.length) {
+                    dot.classList.remove('bg-slate-700');
+                    dot.classList.add('bg-emerald-500', 'shadow-[0_0_10px_rgba(16,185,129,0.5)]');
+                } else {
+                    dot.classList.remove('bg-emerald-500', 'shadow-[0_0_10px_rgba(16,185,129,0.5)]');
+                    dot.classList.add('bg-slate-700');
+                }
+            });
+            
+            // Update session average live if we have data
+            if (reactionTimes.length > 0) {
+                const sum = reactionTimes.reduce((a, b) => a + b, 0);
+                avgDisplay.innerText = Math.round(sum / reactionTimes.length) + ' ms';
+            } else {
+                avgDisplay.innerText = '--';
+            }
+        }
+
+        function updateStatsDisplay() {
+            const pb = localStorage.getItem('reaction_pb');
+            pbDisplay.innerText = pb ? `${pb} ms` : '--';
+        }
+
+    </script>
+</body>
+</html>
